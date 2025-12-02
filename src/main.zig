@@ -29,6 +29,7 @@ const RconPacket = packed struct {
 };
 
 const SERVERDATA_AUTH_ID = 1;
+const SEND_COMMAND_ID = 2;
 const RCON_PACKET_MIN_SIZE = 10;
 
 pub fn main() !void {
@@ -74,12 +75,12 @@ pub fn main() !void {
         command_str[command_str.len - 2] = 0;
         command_str[command_str.len - 1] = 0;
 
-        const command_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + input.len), .id = 1488, .type = 2 };
+        const command_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + input.len), .id = SEND_COMMAND_ID, .type = 2 };
         const command_packet_b = try command_packet.build(command_str, alloc);
-        const wr_bytes = try std.posix.write(sock, command_packet_b);
+        const wr_bytes = try std.posix.write(sock, command_packet_b); // TODO: What if cant write in 1 write, need to split it
         std.debug.print("Written comm bytes: {}, {}, {}\n", .{ wr_bytes, command_packet, command_packet_b.len });
 
-        const rd_bytes = try std.posix.read(sock, &rbuf);
+        const rd_bytes = try std.posix.read(sock, &rbuf); // TODO: This may not come in 1 read, so need a way to make sure it all comes, timeout?
 
         const command_response_packet = std.mem.bytesToValue(RconPacket, rbuf[0 .. @bitSizeOf(RconPacket) / 8]);
         const left_bytes = rd_bytes - @bitSizeOf(RconPacket) / 8;
