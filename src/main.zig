@@ -1,6 +1,11 @@
 const std = @import("std");
 
 const PacketTypeError = error{TypeMismatch};
+const SERVERDATA_AUTH_ID = 1;
+const SEND_COMMAND_ID = 2;
+const RCON_PACKET_MIN_SIZE = 10;
+const RCON_PACKET_MAX_SIZE = 4096;
+const RCON_PACKET_SIZE = @bitSizeOf(RconPacket) / 8;
 
 const RconPacket = packed struct {
     size: i32,
@@ -8,7 +13,7 @@ const RconPacket = packed struct {
     type: i32,
 
     pub fn build(self: *const RconPacket, body: ?[]const u8, alloc: std.mem.Allocator) ![]u8 {
-        const auth_packet_b = try alloc.alloc(u8, @bitSizeOf(RconPacket) / 8 + if (body == null) 0 else body.?.len);
+        const auth_packet_b = try alloc.alloc(u8, RCON_PACKET_SIZE + if (body == null) 0 else body.?.len);
         var idx: usize = 0;
 
         std.mem.writePackedInt(i32, auth_packet_b[idx .. idx + @sizeOf(i32)], 0, self.size, std.builtin.Endian.little);
@@ -27,11 +32,6 @@ const RconPacket = packed struct {
         return auth_packet_b;
     }
 };
-
-const SERVERDATA_AUTH_ID = 1;
-const SEND_COMMAND_ID = 2;
-const RCON_PACKET_MIN_SIZE = 10;
-const RCON_PACKET_MAX_SIZE = 4096;
 
 /// Allocates
 fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
@@ -59,9 +59,23 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
     const addr = try std.net.Address.parseIp("127.0.0.1", 25575);
-    const sock = try std.posix.socket(addr.any.family, std.posix.SOCK.STREAM, std.posix.IPPROTO.TCP);
+    const sock = std.posix.socket(
+        addr.any.family,
+        std.posix.SOCK.STREAM,
+        std.posix.IPPROTO.TCP,
+    ) catch |err| {
+        std.debug.print("Error creating socket: {s}\n", .{@errorName(err)});
+        return err;
+    };
+    if (sock < 0) {
+        return;
+    }
 
-    try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
+    std.posix.connect(sock, &addr.any, addr.getOsSockLen()) catch |err| {
+        std.debug.print("Error connecting to RCON: {s}\n", .{@errorName(err)});
+        return;
+    };
+
     defer std.posix.close(sock);
 
     var rbuf: [4096]u8 = undefined;
@@ -77,11 +91,17 @@ pub fn main() !void {
     const auth_packet_b = try auth_packet.build(rcon_pass, alloc);
     defer alloc.free(auth_packet_b);
 
-    _ = try std.posix.write(sock, auth_packet_b);
+    var wr_bytes = std.posix.write(sock, auth_packet_b) catch |err| {
+        std.debug.print("Error writing to socket: {s}", .{@errorName(err)});
+        return err;
+    };
 
-    _ = try std.posix.read(sock, &rbuf);
+    var rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
+        std.debug.print("Error reading from socket: {s}", .{@errorName(err)});
+        return err;
+    };
 
-    const auth_response_packet = std.mem.bytesToValue(RconPacket, rbuf[0 .. @bitSizeOf(RconPacket) / 8]);
+    const auth_response_packet = std.mem.bytesToValue(RconPacket, rbuf[0..RCON_PACKET_SIZE]);
     if (auth_response_packet.id == -1) {
         std.debug.print("Was not authorized", .{});
         return;
@@ -89,15 +109,13 @@ pub fn main() !void {
     // TODO: Handle errors gracefully
 
     std.debug.print("Authorized\n", .{});
-    // std.debug.print("Response: {}\n", .{auth_response_packet});
-
     while (true) {
         var cmd_reader = std.fs.File.stdin().reader(&rbuf);
         const cmd_stdin = &cmd_reader.interface;
 
         const command_str = try getCommandFromInp(cmd_stdin, alloc);
         defer alloc.free(command_str);
-        if (command_str.len > RCON_PACKET_MAX_SIZE - @bitSizeOf(RconPacket) / 8) {
+        if (command_str.len > RCON_PACKET_MAX_SIZE - RCON_PACKET_SIZE) {
             std.debug.print("Input is too big to fit in a packet: {} bytes\n", .{command_str.len});
             return;
         }
@@ -105,17 +123,26 @@ pub fn main() !void {
         const command_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + command_str.len - 2), .id = SEND_COMMAND_ID, .type = 2 };
         const command_packet_b = try command_packet.build(command_str, alloc);
         defer alloc.free(command_packet_b);
-        _ = try std.posix.write(sock, command_packet_b); // TODO: What if cant write in 1 write, need to split it
 
-        const rd_bytes = try std.posix.read(sock, &rbuf); // TODO: This may not come in 1 read, so need a way to make sure it all comes, timeout?
+        // TODO: Write in several writes
+        wr_bytes = std.posix.write(sock, command_packet_b) catch |err| {
+            std.debug.print("Error writing to socket: {s}\n", .{@errorName(err)});
+            return;
+        };
 
-        const resp_packet = std.mem.bytesToValue(RconPacket, rbuf[0 .. @bitSizeOf(RconPacket) / 8]);
+        // TODO: Packet split in several reads
+        rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
+            std.debug.print("Error reading from socket: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        const resp_packet = std.mem.bytesToValue(RconPacket, rbuf[0..RCON_PACKET_SIZE]);
         std.debug.print("Response packet: {}\n", .{resp_packet});
-        if (rd_bytes < @bitSizeOf(RconPacket) / 8) {
+        if (rd_bytes < RCON_PACKET_SIZE) {
             std.debug.print("Malformed response\n", .{});
         } else {
-            const left_bytes: usize = rd_bytes - @bitSizeOf(RconPacket) / 8;
-            std.debug.print("Command response: {s}\n", .{rbuf[@bitSizeOf(RconPacket) / 8 .. @bitSizeOf(RconPacket) / 8 + left_bytes]});
+            const left_bytes: usize = rd_bytes - RCON_PACKET_SIZE;
+            std.debug.print("Command response: {s}\n", .{rbuf[RCON_PACKET_SIZE .. RCON_PACKET_SIZE + left_bytes]});
         }
     }
 }
