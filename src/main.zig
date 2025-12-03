@@ -63,7 +63,7 @@ pub fn main() !void {
     try std.posix.connect(sock, &addr.any, addr.getOsSockLen());
     defer std.posix.close(sock);
 
-    var rbuf: [1024]u8 = undefined;
+    var rbuf: [4096]u8 = undefined;
 
     var pswd_reader = std.fs.File.stdin().reader(&rbuf);
     const pswd_stdin = &pswd_reader.interface;
@@ -100,7 +100,11 @@ pub fn main() !void {
         const command_packet_b = try command_packet.build(command_str, alloc);
         _ = try std.posix.write(sock, command_packet_b); // TODO: What if cant write in 1 write, need to split it
 
+        std.posix.nanosleep(2, 0);
         const rd_bytes = try std.posix.read(sock, &rbuf); // TODO: This may not come in 1 read, so need a way to make sure it all comes, timeout?
+
+        const resp_packet = std.mem.bytesToValue(RconPacket, rbuf[0 .. @bitSizeOf(RconPacket) / 8]);
+        std.debug.print("Response packet: {}\n", .{resp_packet});
 
         if (rd_bytes < @bitSizeOf(RconPacket) / 8) {
             std.debug.print("Malformed response\n", .{});
