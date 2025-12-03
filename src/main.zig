@@ -31,6 +31,7 @@ const RconPacket = packed struct {
 const SERVERDATA_AUTH_ID = 1;
 const SEND_COMMAND_ID = 2;
 const RCON_PACKET_MIN_SIZE = 10;
+const RCON_PACKET_MAX_SIZE = 4096;
 
 /// Allocates
 fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
@@ -69,6 +70,7 @@ pub fn main() !void {
     const pswd_stdin = &pswd_reader.interface;
 
     const rcon_pass = try getPasswordFromInp(pswd_stdin, alloc);
+    defer alloc.free(rcon_pass);
 
     const auth_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + rcon_pass.len - 2), .id = SERVERDATA_AUTH_ID, .type = 3 };
 
@@ -95,17 +97,20 @@ pub fn main() !void {
 
         const command_str = try getCommandFromInp(cmd_stdin, alloc);
         defer alloc.free(command_str);
+        if (command_str.len > RCON_PACKET_MAX_SIZE - @bitSizeOf(RconPacket) / 8) {
+            std.debug.print("Input is too big to fit in a packet: {} bytes\n", .{command_str.len});
+            return;
+        }
 
         const command_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + command_str.len - 2), .id = SEND_COMMAND_ID, .type = 2 };
         const command_packet_b = try command_packet.build(command_str, alloc);
+        defer alloc.free(command_packet_b);
         _ = try std.posix.write(sock, command_packet_b); // TODO: What if cant write in 1 write, need to split it
 
-        std.posix.nanosleep(2, 0);
         const rd_bytes = try std.posix.read(sock, &rbuf); // TODO: This may not come in 1 read, so need a way to make sure it all comes, timeout?
 
         const resp_packet = std.mem.bytesToValue(RconPacket, rbuf[0 .. @bitSizeOf(RconPacket) / 8]);
         std.debug.print("Response packet: {}\n", .{resp_packet});
-
         if (rd_bytes < @bitSizeOf(RconPacket) / 8) {
             std.debug.print("Malformed response\n", .{});
         } else {
