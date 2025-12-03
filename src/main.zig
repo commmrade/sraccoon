@@ -1,6 +1,8 @@
 const std = @import("std");
 
 const PacketTypeError = error{TypeMismatch};
+const ClientError = error{ ConnectFailed, SockCreationFailed };
+
 const SERVERDATA_AUTH_ID = 1;
 const SEND_COMMAND_ID = 2;
 const RCON_PACKET_MIN_SIZE = 10;
@@ -33,6 +35,37 @@ const RconPacket = packed struct {
     }
 };
 
+const RconClient = struct {
+    sock: i32,
+    alloc: std.mem.Allocator,
+    const Self = @This();
+    fn connect(ip: []const u8, port: u16, alloc: std.mem.Allocator) !RconClient {
+        const addr = try std.net.Address.parseIp(ip, port);
+        const sock = try std.posix.socket(
+            addr.any.family,
+            std.posix.SOCK.STREAM,
+            std.posix.IPPROTO.TCP,
+        );
+        const client = RconClient{ .sock = sock, .alloc = alloc };
+
+        try std.posix.connect(client.sock, &addr.any, addr.getOsSockLen());
+
+        return client;
+    }
+    fn close(self: *Self) void {
+        std.posix.close(self.sock);
+    }
+
+    fn write(self: *Self, buf: []const u8) !usize {
+        const wr_bytes = try std.posix.write(self.sock, buf);
+        return wr_bytes;
+    }
+    fn read(self: *Self, buf: []u8) !usize {
+        const rd_bytes = std.posix.read(self.sock, buf);
+        return rd_bytes;
+    }
+};
+
 /// Allocates
 fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
     std.debug.print("Enter your password: ", .{});
@@ -58,27 +91,13 @@ fn getCommandFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
-    const addr = try std.net.Address.parseIp("127.0.0.1", 25575);
-    const sock = std.posix.socket(
-        addr.any.family,
-        std.posix.SOCK.STREAM,
-        std.posix.IPPROTO.TCP,
-    ) catch |err| {
-        std.debug.print("Error creating socket: {s}\n", .{@errorName(err)});
-        return err;
-    };
-    if (sock < 0) {
-        return;
-    }
-
-    std.posix.connect(sock, &addr.any, addr.getOsSockLen()) catch |err| {
-        std.debug.print("Error connecting to RCON: {s}\n", .{@errorName(err)});
-        return;
-    };
-
-    defer std.posix.close(sock);
-
     var rbuf: [4096]u8 = undefined;
+
+    var client = RconClient.connect("127.0.0.1", 25575, alloc) catch |err| {
+        std.debug.print("Connection failure: {s}\n", .{@errorName(err)});
+        return;
+    };
+    defer client.close();
 
     var pswd_reader = std.fs.File.stdin().reader(&rbuf);
     const pswd_stdin = &pswd_reader.interface;
@@ -91,15 +110,19 @@ pub fn main() !void {
     const auth_packet_b = try auth_packet.build(rcon_pass, alloc);
     defer alloc.free(auth_packet_b);
 
-    var wr_bytes = std.posix.write(sock, auth_packet_b) catch |err| {
-        std.debug.print("Error writing to socket: {s}", .{@errorName(err)});
+    var wr_bytes = client.write(auth_packet_b) catch |err| {
+        std.debug.print("Write failure: {s}", .{@errorName(err)});
         return err;
     };
 
-    var rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
-        std.debug.print("Error reading from socket: {s}", .{@errorName(err)});
+    var rd_bytes = client.read(&rbuf) catch |err| {
+        std.debug.print("Read failure: {s}", .{@errorName(err)});
         return err;
     };
+    // var rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
+    //     std.debug.print("Error reading from socket: {s}", .{@errorName(err)});
+    //     return err;
+    // };
 
     const auth_response_packet = std.mem.bytesToValue(RconPacket, rbuf[0..RCON_PACKET_SIZE]);
     if (auth_response_packet.id == -1) {
@@ -125,16 +148,24 @@ pub fn main() !void {
         defer alloc.free(command_packet_b);
 
         // TODO: Write in several writes
-        wr_bytes = std.posix.write(sock, command_packet_b) catch |err| {
-            std.debug.print("Error writing to socket: {s}\n", .{@errorName(err)});
+        wr_bytes = client.write(command_packet_b) catch |err| {
+            std.debug.print("Write failure: {s}", .{@errorName(err)});
             return;
         };
+        // wr_bytes = std.posix.write(sock, command_packet_b) catch |err| {
+        //     std.debug.print("Error writing to socket: {s}\n", .{@errorName(err)});
+        //     return;
+        // };
 
         // TODO: Packet split in several reads
-        rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
-            std.debug.print("Error reading from socket: {s}\n", .{@errorName(err)});
+        rd_bytes = client.read(&rbuf) catch |err| {
+            std.debug.print("Read failure: {s}", .{@errorName(err)});
             return;
         };
+        // rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
+        //     std.debug.print("Error reading from socket: {s}\n", .{@errorName(err)});
+        //     return;
+        // };
 
         const resp_packet = std.mem.bytesToValue(RconPacket, rbuf[0..RCON_PACKET_SIZE]);
         std.debug.print("Response packet: {}\n", .{resp_packet});
