@@ -48,7 +48,7 @@ pub fn main() !void {
     const auth_packet_b = try auth_packet.build(rcon_pass, alloc);
     defer alloc.free(auth_packet_b);
 
-    var wr_bytes = client.write(auth_packet_b) catch |err| {
+    var wr_bytes = client.write_all(auth_packet_b) catch |err| {
         std.debug.print("Write failure: {s}", .{@errorName(err)});
         return err;
     };
@@ -81,7 +81,7 @@ pub fn main() !void {
         defer alloc.free(command_packet_b);
 
         // TODO: Write in several writes
-        wr_bytes = client.write(command_packet_b) catch |err| {
+        wr_bytes = client.write_all(command_packet_b) catch |err| {
             std.debug.print("Write failure: {s}", .{@errorName(err)});
             return;
         };

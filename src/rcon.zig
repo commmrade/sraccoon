@@ -57,6 +57,15 @@ pub const RconClient = struct {
         const wr_bytes = try std.posix.write(self.sock, buf);
         return wr_bytes;
     }
+    pub fn write_all(self: *Self, buf: []const u8) !usize {
+        const total_bytes = buf.len;
+        var total_written: usize = 0;
+        while (total_written < total_bytes) {
+            total_written += try self.write(buf[total_written..]);
+            std.debug.print("{} {}\n", .{ total_written, total_bytes });
+        }
+        return total_written;
+    }
     pub fn read(self: *Self, buf: []u8) !usize {
         const rd_bytes = std.posix.read(self.sock, buf);
         return rd_bytes;
