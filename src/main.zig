@@ -1,70 +1,8 @@
 const std = @import("std");
+const rcon = @import("rcon.zig");
 
 const PacketTypeError = error{TypeMismatch};
 const ClientError = error{ ConnectFailed, SockCreationFailed };
-
-const SERVERDATA_AUTH_ID = 1;
-const SEND_COMMAND_ID = 2;
-const RCON_PACKET_MIN_SIZE = 10;
-const RCON_PACKET_MAX_SIZE = 4096;
-const RCON_PACKET_SIZE = @bitSizeOf(RconPacket) / 8;
-
-const RconPacket = packed struct {
-    size: i32,
-    id: i32,
-    type: i32,
-
-    pub fn build(self: *const RconPacket, body: ?[]const u8, alloc: std.mem.Allocator) ![]u8 {
-        const auth_packet_b = try alloc.alloc(u8, RCON_PACKET_SIZE + if (body == null) 0 else body.?.len);
-        var idx: usize = 0;
-
-        std.mem.writePackedInt(i32, auth_packet_b[idx .. idx + @sizeOf(i32)], 0, self.size, std.builtin.Endian.little);
-        idx += @sizeOf(i32);
-
-        std.mem.writePackedInt(i32, auth_packet_b[idx .. idx + @sizeOf(i32)], 0, self.id, std.builtin.Endian.little);
-        idx += @sizeOf(i32);
-
-        std.mem.writePackedInt(i32, auth_packet_b[idx .. idx + @sizeOf(i32)], 0, self.type, std.builtin.Endian.little);
-        idx += @sizeOf(i32);
-
-        if (body != null) {
-            @memcpy(auth_packet_b[idx .. idx + body.?.len], body.?.ptr);
-        }
-
-        return auth_packet_b;
-    }
-};
-
-const RconClient = struct {
-    sock: i32,
-    alloc: std.mem.Allocator,
-    const Self = @This();
-    fn connect(ip: []const u8, port: u16, alloc: std.mem.Allocator) !RconClient {
-        const addr = try std.net.Address.parseIp(ip, port);
-        const sock = try std.posix.socket(
-            addr.any.family,
-            std.posix.SOCK.STREAM,
-            std.posix.IPPROTO.TCP,
-        );
-        const client = RconClient{ .sock = sock, .alloc = alloc };
-
-        try std.posix.connect(client.sock, &addr.any, addr.getOsSockLen());
-
-        return client;
-    }
-    fn close(self: *Self) void {
-        std.posix.close(self.sock);
-    }
-
-    fn write(self: *Self, buf: []const u8) !usize {
-        const wr_bytes = try std.posix.write(self.sock, buf);
-        return wr_bytes;
-    }
-    fn read(self: *Self, buf: []u8) !usize {
-        const rd_bytes = std.posix.read(self.sock, buf);
-        return rd_bytes;
-    }
-};
 
 /// Allocates
 fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
@@ -93,7 +31,7 @@ pub fn main() !void {
     const alloc = gpa.allocator();
     var rbuf: [4096]u8 = undefined;
 
-    var client = RconClient.connect("127.0.0.1", 25575, alloc) catch |err| {
+    var client = rcon.RconClient.connect("127.0.0.1", 25575, alloc) catch |err| {
         std.debug.print("Connection failure: {s}\n", .{@errorName(err)});
         return;
     };
@@ -105,7 +43,7 @@ pub fn main() !void {
     const rcon_pass = try getPasswordFromInp(pswd_stdin, alloc);
     defer alloc.free(rcon_pass);
 
-    const auth_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + rcon_pass.len - 2), .id = SERVERDATA_AUTH_ID, .type = 3 };
+    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + rcon_pass.len - 2), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
 
     const auth_packet_b = try auth_packet.build(rcon_pass, alloc);
     defer alloc.free(auth_packet_b);
@@ -119,17 +57,12 @@ pub fn main() !void {
         std.debug.print("Read failure: {s}", .{@errorName(err)});
         return err;
     };
-    // var rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
-    //     std.debug.print("Error reading from socket: {s}", .{@errorName(err)});
-    //     return err;
-    // };
 
-    const auth_response_packet = std.mem.bytesToValue(RconPacket, rbuf[0..RCON_PACKET_SIZE]);
+    const auth_response_packet = std.mem.bytesToValue(rcon.RconPacket, rbuf[0..rcon.RCON_PACKET_SIZE]);
     if (auth_response_packet.id == -1) {
         std.debug.print("Was not authorized", .{});
         return;
     }
-    // TODO: Handle errors gracefully
 
     std.debug.print("Authorized\n", .{});
     while (true) {
@@ -138,12 +71,12 @@ pub fn main() !void {
 
         const command_str = try getCommandFromInp(cmd_stdin, alloc);
         defer alloc.free(command_str);
-        if (command_str.len > RCON_PACKET_MAX_SIZE - RCON_PACKET_SIZE) {
+        if (command_str.len > rcon.RCON_PACKET_MAX_SIZE - rcon.RCON_PACKET_SIZE) {
             std.debug.print("Input is too big to fit in a packet: {} bytes\n", .{command_str.len});
             return;
         }
 
-        const command_packet = RconPacket{ .size = @intCast(RCON_PACKET_MIN_SIZE + command_str.len - 2), .id = SEND_COMMAND_ID, .type = 2 };
+        const command_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + command_str.len - 2), .id = rcon.SEND_COMMAND_ID, .type = 2 };
         const command_packet_b = try command_packet.build(command_str, alloc);
         defer alloc.free(command_packet_b);
 
@@ -152,28 +85,20 @@ pub fn main() !void {
             std.debug.print("Write failure: {s}", .{@errorName(err)});
             return;
         };
-        // wr_bytes = std.posix.write(sock, command_packet_b) catch |err| {
-        //     std.debug.print("Error writing to socket: {s}\n", .{@errorName(err)});
-        //     return;
-        // };
 
         // TODO: Packet split in several reads
         rd_bytes = client.read(&rbuf) catch |err| {
             std.debug.print("Read failure: {s}", .{@errorName(err)});
             return;
         };
-        // rd_bytes = std.posix.read(sock, &rbuf) catch |err| {
-        //     std.debug.print("Error reading from socket: {s}\n", .{@errorName(err)});
-        //     return;
-        // };
 
-        const resp_packet = std.mem.bytesToValue(RconPacket, rbuf[0..RCON_PACKET_SIZE]);
+        const resp_packet = std.mem.bytesToValue(rcon.RconPacket, rbuf[0..rcon.RCON_PACKET_SIZE]);
         std.debug.print("Response packet: {}\n", .{resp_packet});
-        if (rd_bytes < RCON_PACKET_SIZE) {
+        if (rd_bytes < rcon.RCON_PACKET_SIZE) {
             std.debug.print("Malformed response\n", .{});
         } else {
-            const left_bytes: usize = rd_bytes - RCON_PACKET_SIZE;
-            std.debug.print("Command response: {s}\n", .{rbuf[RCON_PACKET_SIZE .. RCON_PACKET_SIZE + left_bytes]});
+            const left_bytes: usize = rd_bytes - rcon.RCON_PACKET_SIZE;
+            std.debug.print("Command response: {s}\n", .{rbuf[rcon.RCON_PACKET_SIZE .. rcon.RCON_PACKET_SIZE + left_bytes]});
         }
     }
 }
