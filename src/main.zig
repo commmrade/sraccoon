@@ -26,12 +26,12 @@ fn getCommandFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
     return command_str;
 }
 
-var config = struct { host: []const u8 = "127.0.0.1", port: u16 = 25575 }{};
+var config = struct { host: []const u8 = "127.0.0.1", port: u16 = 25575, password: []const u8 = "" }{};
 
 pub fn main() !void {
     var r = try cli.AppRunner.init(std.heap.page_allocator);
 
-    const app = cli.App{ .command = cli.Command{ .name = "server settings", .options = try r.allocOptions(&.{ .{ .long_name = "host", .help = "host to listen on", .value_ref = r.mkRef(&config.host) }, .{ .long_name = "port", .help = "port to bind to", .value_ref = r.mkRef(&config.port) } }), .target = cli.CommandTarget{
+    const app = cli.App{ .command = cli.Command{ .name = "server settings", .options = try r.allocOptions(&.{ .{ .long_name = "host", .help = "Host to listen on", .value_ref = r.mkRef(&config.host) }, .{ .long_name = "port", .help = "Port to bind to", .value_ref = r.mkRef(&config.port) }, .{ .long_name = "password", .help = "RCON Password", .required = true, .value_ref = r.mkRef(&config.password) } }), .target = cli.CommandTarget{
         .action = cli.CommandAction{ .exec = run },
     } } };
     return r.run(&app);
@@ -48,15 +48,16 @@ pub fn run() !void {
     };
     defer client.close();
 
-    var pswd_reader = std.fs.File.stdin().reader(&rbuf);
-    const pswd_stdin = &pswd_reader.interface;
+    // var pswd_reader = std.fs.File.stdin().reader(&rbuf);
+    // const pswd_stdin = &pswd_reader.interface;
 
-    const rcon_pass = try getPasswordFromInp(pswd_stdin, alloc);
-    defer alloc.free(rcon_pass);
+    // const rcon_pass = try getPasswordFromInp(pswd_stdin, alloc);
+    // defer alloc.free(rcon_pass);
+    // const pass: []const u8 = "1234";
+    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + config.password.len - 2), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
 
-    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + rcon_pass.len - 2), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
-
-    const auth_packet_b = try auth_packet.build(rcon_pass, alloc);
+    std.debug.print("Pass: '{s}' {}\n", .{ config.password, config.password.len });
+    const auth_packet_b = try auth_packet.build(config.password, alloc);
     defer alloc.free(auth_packet_b);
 
     var wr_bytes = client.write_all(auth_packet_b) catch |err| {
@@ -71,7 +72,7 @@ pub fn run() !void {
 
     const auth_response_packet = std.mem.bytesToValue(rcon.RconPacket, rbuf[0..rcon.RCON_PACKET_SIZE]);
     if (auth_response_packet.id == -1) {
-        std.debug.print("Was not authorized", .{});
+        std.debug.print("Was not authorized\n", .{});
         return;
     }
 
