@@ -48,16 +48,13 @@ pub fn run() !void {
     };
     defer client.close();
 
-    // var pswd_reader = std.fs.File.stdin().reader(&rbuf);
-    // const pswd_stdin = &pswd_reader.interface;
+    const pass = try alloc.alloc(u8, config.password.len + 2);
+    defer alloc.free(pass);
+    @memset(pass, 0);
+    @memcpy(pass[0..config.password.len], config.password);
+    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + pass.len - 2), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
 
-    // const rcon_pass = try getPasswordFromInp(pswd_stdin, alloc);
-    // defer alloc.free(rcon_pass);
-    // const pass: []const u8 = "1234";
-    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + config.password.len - 2), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
-
-    std.debug.print("Pass: '{s}' {}\n", .{ config.password, config.password.len });
-    const auth_packet_b = try auth_packet.build(config.password, alloc);
+    const auth_packet_b = try auth_packet.build(pass, alloc);
     defer alloc.free(auth_packet_b);
 
     var wr_bytes = client.write_all(auth_packet_b) catch |err| {
