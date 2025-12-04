@@ -62,7 +62,6 @@ pub const RconClient = struct {
         var total_written: usize = 0;
         while (total_written < total_bytes) {
             total_written += try self.write(buf[total_written..]);
-            std.debug.print("{} {}\n", .{ total_written, total_bytes });
         }
         return total_written;
     }

@@ -1,5 +1,6 @@
 const std = @import("std");
 const rcon = @import("rcon.zig");
+const cli = @import("cli");
 
 const PacketTypeError = error{TypeMismatch};
 const ClientError = error{ ConnectFailed, SockCreationFailed };
@@ -18,7 +19,6 @@ fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
 fn getCommandFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
     std.debug.print("Enter a command: ", .{});
     const input = try stdin.takeDelimiterExclusive('\n');
-
     const command_str = try alloc.alloc(u8, input.len + 2);
     @memcpy(command_str[0..input.len], input);
     command_str[command_str.len - 2] = 0;
@@ -26,12 +26,23 @@ fn getCommandFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
     return command_str;
 }
 
+var config = struct { host: []const u8 = "127.0.0.1", port: u16 = 25575 }{};
+
 pub fn main() !void {
+    var r = try cli.AppRunner.init(std.heap.page_allocator);
+
+    const app = cli.App{ .command = cli.Command{ .name = "server settings", .options = try r.allocOptions(&.{ .{ .long_name = "host", .help = "host to listen on", .value_ref = r.mkRef(&config.host) }, .{ .long_name = "port", .help = "port to bind to", .value_ref = r.mkRef(&config.port) } }), .target = cli.CommandTarget{
+        .action = cli.CommandAction{ .exec = run },
+    } } };
+    return r.run(&app);
+}
+
+pub fn run() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const alloc = gpa.allocator();
     var rbuf: [4096]u8 = undefined;
 
-    var client = rcon.RconClient.connect("127.0.0.1", 25575, alloc) catch |err| {
+    var client = rcon.RconClient.connect(config.host, config.port, alloc) catch |err| {
         std.debug.print("Connection failure: {s}\n", .{@errorName(err)});
         return;
     };

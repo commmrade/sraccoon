@@ -8,9 +8,13 @@ pub fn build(b: *std.Build) void {
             .target = b.graph.host,
         }),
     });
+    const cli = b.dependency("cli", .{});
+    exe.root_module.addImport("cli", cli.module("cli"));
+
     b.installArtifact(exe);
 
     const run_exe = b.addRunArtifact(exe);
+    run_exe.addArgs(b.args.?);
     const run_step = b.step("run", "Run");
     run_step.dependOn(&run_exe.step);
 }
