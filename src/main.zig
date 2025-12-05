@@ -102,7 +102,8 @@ pub fn run() !void {
             std.debug.print("Malformed response\n", .{});
         } else {
             const left_bytes: usize = rd_bytes - rcon.RCON_PACKET_SIZE;
-            std.debug.print("Command response: {s}\n", .{rbuf[rcon.RCON_PACKET_SIZE .. rcon.RCON_PACKET_SIZE + left_bytes]});
+            const resp_msg = rbuf[rcon.RCON_PACKET_SIZE .. rcon.RCON_PACKET_SIZE + left_bytes];
+            std.debug.print("Command response: {s}\n", .{resp_msg});
         }
     }
 }
