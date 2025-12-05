@@ -5,7 +5,6 @@ const cli = @import("cli");
 const PacketTypeError = error{TypeMismatch};
 const ClientError = error{ ConnectFailed, SockCreationFailed };
 
-/// Allocates
 fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
     std.debug.print("Enter your password: ", .{});
     const pass_input = try stdin.takeDelimiterExclusive('\n');
@@ -89,20 +88,16 @@ pub fn run() !void {
         const command_packet_b = try command_packet.build(command_str, alloc);
         defer alloc.free(command_packet_b);
 
-        // TODO: Write in several writes
         wr_bytes = client.write_all(command_packet_b) catch |err| {
             std.debug.print("Write failure: {s}", .{@errorName(err)});
             return;
         };
 
-        // TODO: Packet split in several reads
         rd_bytes = client.read(&rbuf) catch |err| {
             std.debug.print("Read failure: {s}", .{@errorName(err)});
             return;
         };
 
-        const resp_packet = std.mem.bytesToValue(rcon.RconPacket, rbuf[0..rcon.RCON_PACKET_SIZE]);
-        std.debug.print("Response packet: {}\n", .{resp_packet});
         if (rd_bytes < rcon.RCON_PACKET_SIZE) {
             std.debug.print("Malformed response\n", .{});
         } else {

@@ -13,6 +13,7 @@ pub const RconPacket = packed struct {
 
     pub fn build(self: *const RconPacket, body: ?[]const u8, alloc: std.mem.Allocator) ![]u8 {
         // TODO: Maybe I should take care of last 2 zero bytes here, and not when constructing body
+        //
         const auth_packet_b = try alloc.alloc(u8, RCON_PACKET_SIZE + if (body == null) 0 else body.?.len);
         var idx: usize = 0;
 
