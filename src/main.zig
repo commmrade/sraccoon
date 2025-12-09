@@ -5,24 +5,10 @@ const cli = @import("cli");
 const PacketTypeError = error{TypeMismatch};
 const ClientError = error{ ConnectFailed, SockCreationFailed };
 
-fn getPasswordFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
-    std.debug.print("Enter your password: ", .{});
-    const pass_input = try stdin.takeDelimiterExclusive('\n');
-    const command_str = try alloc.alloc(u8, pass_input.len + 2);
-    @memcpy(command_str[0..pass_input.len], pass_input);
-    command_str[command_str.len - 2] = 0;
-    command_str[command_str.len - 1] = 0;
-    return command_str;
-}
-
-fn getCommandFromInp(stdin: *std.io.Reader, alloc: std.mem.Allocator) ![]u8 {
+fn getCommandFromInp(stdin: *std.io.Reader) ![]u8 {
     std.debug.print("Enter a command: ", .{});
     const input = try stdin.takeDelimiterExclusive('\n');
-    const command_str = try alloc.alloc(u8, input.len + 2);
-    @memcpy(command_str[0..input.len], input);
-    command_str[command_str.len - 2] = 0;
-    command_str[command_str.len - 1] = 0;
-    return command_str;
+    return input;
 }
 
 var config = struct { host: []const u8 = "127.0.0.1", port: u16 = 25575, password: []const u8 = "" }{};
@@ -47,13 +33,9 @@ pub fn run() !void {
     };
     defer client.close();
 
-    const pass = try alloc.alloc(u8, config.password.len + 2);
-    defer alloc.free(pass);
-    @memset(pass, 0);
-    @memcpy(pass[0..config.password.len], config.password);
-    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + pass.len - 2), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
+    const auth_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + config.password.len), .id = rcon.SERVERDATA_AUTH_ID, .type = 3 };
 
-    const auth_packet_b = try auth_packet.build(pass, alloc);
+    const auth_packet_b = try auth_packet.build(config.password, alloc);
     defer alloc.free(auth_packet_b);
 
     var wr_bytes = client.write_all(auth_packet_b) catch |err| {
@@ -77,14 +59,13 @@ pub fn run() !void {
         var cmd_reader = std.fs.File.stdin().reader(&rbuf);
         const cmd_stdin = &cmd_reader.interface;
 
-        const command_str = try getCommandFromInp(cmd_stdin, alloc);
-        defer alloc.free(command_str);
+        const command_str = try getCommandFromInp(cmd_stdin);
         if (command_str.len > rcon.RCON_PACKET_MAX_SIZE - rcon.RCON_PACKET_SIZE) {
             std.debug.print("Input is too big to fit in a packet: {} bytes\n", .{command_str.len});
             return;
         }
 
-        const command_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + command_str.len - 2), .id = rcon.SEND_COMMAND_ID, .type = 2 };
+        const command_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + command_str.len), .id = rcon.SEND_COMMAND_ID, .type = 2 };
         const command_packet_b = try command_packet.build(command_str, alloc);
         defer alloc.free(command_packet_b);
 

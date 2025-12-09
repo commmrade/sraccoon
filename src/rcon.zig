@@ -12,9 +12,8 @@ pub const RconPacket = packed struct {
     type: i32,
 
     pub fn build(self: *const RconPacket, body: ?[]const u8, alloc: std.mem.Allocator) ![]u8 {
-        // TODO: Maybe I should take care of last 2 zero bytes here, and not when constructing body
-        //
-        const auth_packet_b = try alloc.alloc(u8, RCON_PACKET_SIZE + if (body == null) 0 else body.?.len);
+        const auth_packet_b = try alloc.alloc(u8, RCON_PACKET_SIZE + if (body == null) 0 else (body.?.len + 2));
+        @memset(auth_packet_b, 0);
         var idx: usize = 0;
 
         std.mem.writePackedInt(i32, auth_packet_b[idx .. idx + @sizeOf(i32)], 0, self.size, std.builtin.Endian.little);
