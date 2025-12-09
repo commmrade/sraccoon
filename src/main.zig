@@ -74,6 +74,8 @@ pub fn run() !void {
             return;
         };
 
+        // TODO: Implement multi packet response using RESPONSEVALUE hack
+        // Concat all packets together
         rd_bytes = client.read(&rbuf) catch |err| {
             std.debug.print("Read failure: {s}", .{@errorName(err)});
             return;
