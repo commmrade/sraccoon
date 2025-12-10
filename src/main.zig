@@ -70,23 +70,46 @@ pub fn run() !void {
         defer alloc.free(command_packet_b);
 
         wr_bytes = client.write_all(command_packet_b) catch |err| {
-            std.debug.print("Write failure: {s}", .{@errorName(err)});
+            std.debug.print("Write failure: {s}\n", .{@errorName(err)});
             return;
         };
 
-        // TODO: Implement multi packet response using RESPONSEVALUE hack
-        // Concat all packets together
-        rd_bytes = client.read(&rbuf) catch |err| {
-            std.debug.print("Read failure: {s}", .{@errorName(err)});
+        const response_value_packet = rcon.RconPacket{ .size = @intCast(rcon.RCON_PACKET_MIN_SIZE + 8), .id = 999, .type = 0 };
+
+        const body: [8]u8 = [8]u8{ 0, 0, 0, 1, 0, 0, 0, 0 };
+        const body_slice = body[0..];
+
+        const response_value_packet_b = try response_value_packet.build(body_slice, alloc);
+        wr_bytes = client.write_all(response_value_packet_b) catch |err| {
+            std.debug.print("Write failure: {s}\n", .{@errorName(err)});
             return;
         };
 
-        if (rd_bytes < rcon.RCON_PACKET_SIZE) {
-            std.debug.print("Malformed response\n", .{});
-        } else {
-            const left_bytes: usize = rd_bytes - rcon.RCON_PACKET_SIZE;
-            const resp_msg = rbuf[rcon.RCON_PACKET_SIZE .. rcon.RCON_PACKET_SIZE + left_bytes];
-            std.debug.print("Command response: {s}\n", .{resp_msg});
+        var rd_packets = std.ArrayList([]u8){}; // Store all packets
+        defer rd_packets.deinit(alloc);
+
+        while (true) {
+            rd_bytes = client.read(&rbuf) catch |err| {
+                std.debug.print("Read failure: {s}\n", .{@errorName(err)});
+                return;
+            };
+            const pkt = std.mem.bytesToValue(rcon.RconPacket, rbuf[0..rcon.RCON_PACKET_SIZE]);
+            const payload_len = rd_bytes - rcon.RCON_PACKET_SIZE;
+            if (pkt.id == 999) { // If we get the INCORRECT packet, then we received everything, break the loop
+                break;
+            } else {
+                const payload = try alloc.dupe(u8, rbuf[rcon.RCON_PACKET_SIZE..][0..payload_len]);
+                try rd_packets.append(alloc, payload);
+            }
         }
+
+        var response = std.ArrayList(u8){};
+        defer response.deinit(alloc);
+
+        for (rd_packets.items) |part| { // Order may be wrong, since packets are sent back async, but idc really
+            try response.appendSlice(alloc, part);
+        }
+
+        std.debug.print("Command response: {s}\n", .{response.items});
     }
 }
